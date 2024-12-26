@@ -1,4 +1,3 @@
-import itertools
 import operator
 from collections import namedtuple
 
@@ -24,18 +23,18 @@ def part_2_answer(lines):
 
 
 def is_possible(operators, equation):
-    num_operators_needed = len(equation.numbers) - 1
-    return any(is_correct(equation, ops)
-               for ops in itertools.product(operators, repeat=num_operators_needed))
+    return dfs(operators, equation, equation.numbers[0], 1)
 
 
-def is_correct(equation, ops):
-    total = equation.numbers[0]
-    for op, num in zip(ops, equation.numbers[1:]):
-        total = op(total, num)
-        if total > equation.test_value:
-            return False
-    return total == equation.test_value
+def dfs(operators, equation, value_so_far, next_number):
+    if value_so_far > equation.test_value:
+        return False
+
+    if next_number == len(equation.numbers):
+        return value_so_far == equation.test_value
+
+    return any(dfs(operators, equation, op(value_so_far, equation.numbers[next_number]), next_number + 1)
+               for op in operators)
 
 
 def parse(lines):
