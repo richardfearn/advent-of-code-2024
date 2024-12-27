@@ -6,105 +6,118 @@ from enum import Enum, auto
 def part_1_answer(lines):
     disk_map = parse(lines)
 
-    while len([r for r in disk_map if r.type == RegionType.FREE_SPACE]) > 0:
+    free_space = move_forward_to_next_non_empty_free_space_or_end(disk_map.head)
+    last_file = move_back_to_next_non_empty_file_or_start(disk_map.tail)
 
-        # Still have at least one region of free space to fill. Find the first one
-        first_free_space_index, first_free_space = next(
-            (i, r) for i, r in enumerate(disk_map)
-            if r.type == RegionType.FREE_SPACE)
+    while (free_space.value.type != RegionType.END) and (last_file.value.type != RegionType.START):
 
-        # Will fill the free space with blocks from the last file
-        last_file_index = len(disk_map) - 1
-        last_file = disk_map[last_file_index]
+        # Fill the free space
+        num_blocks_to_move = min(free_space.value.length, last_file.value.length)
+        new_region = File(num_blocks_to_move, last_file.value.file_id)
+        disk_map.insert_before(free_space, new_region)
+        last_file.value.length -= num_blocks_to_move
+        free_space.value.length -= num_blocks_to_move
 
-        num_blocks_to_move = min(first_free_space.length, last_file.length)
+        # Move to next non-empty file if necessary
+        last_file = move_back_to_next_non_empty_file_or_start(last_file)
+        disk_map.discard_after(last_file)
 
-        # Move blocks from last file
-        new_region = File(num_blocks_to_move, last_file.file_id)
-        disk_map.insert(first_free_space_index, new_region)
-        first_free_space_index += 1
-        last_file_index += 1
-        first_free_space.length -= num_blocks_to_move
-        last_file.length -= num_blocks_to_move
-
-        # Remove free space region, if it's now empty
-        if first_free_space.length == 0:
-            disk_map.pop(first_free_space_index)
-            last_file_index -= 1
-
-        # Remove last file, if it's now empty
-        if last_file.length == 0:
-            disk_map.pop(last_file_index)
-
-            # Also remove any free space that could now be at the end
-            if disk_map[len(disk_map) - 1].type == RegionType.FREE_SPACE:
-                disk_map.pop(len(disk_map) - 1)
+        # Remove free space, if it's now empty
+        if free_space.value.length == 0:
+            free_space_to_remove = free_space
+            free_space = move_forward_to_next_non_empty_free_space_or_end(free_space)
+            disk_map.remove(free_space_to_remove)
 
     return checksum(disk_map)
+
+
+def move_forward_to_next_non_empty_free_space_or_end(node):
+    while not (((node.value.type == RegionType.FREE_SPACE) and (node.value.length > 0))
+               or (node.value.type == RegionType.END)):
+        node = node.next
+    return node
+
+
+def move_back_to_next_non_empty_file_or_start(node):
+    while not (((node.value.type == RegionType.FILE) and (node.value.length > 0))
+               or (node.value.type == RegionType.START)):
+        node = node.prev
+    return node
 
 
 def checksum(disk_map):
     total = 0
     start_pos = 0
-    for region in disk_map:
+    pos = disk_map.head
+    while pos.value.type != RegionType.END:
+        region = pos.value
         if region.type == RegionType.FILE:
             total += sum(pos * region.file_id for pos in range(start_pos, start_pos + region.length))
         start_pos += region.length
+        pos = pos.next
     return total
 
 
 def part_2_answer(lines):
     disk_map = parse(lines)
 
-    max_file_num = max(r.file_id for r in disk_map if r.type == RegionType.FILE)
+    file_nodes = {}
+    node = disk_map.head
+    while node.value.type != RegionType.END:
+        if node.value.type == RegionType.FILE:
+            file_nodes[node.value.file_id] = node
+        node = node.next
 
-    for file_to_move in range(max_file_num, 0, -1):
-        file_index, file = next(
-            (i, r) for i, r in enumerate(disk_map)
-            if r.type == RegionType.FILE and r.file_id == file_to_move)
+    max_file_num = max(file_nodes.keys())
 
-        move_file_if_possible(disk_map, file_index, file)
+    # "move each file exactly once in order of decreasing file ID number
+    # starting with the file with the highest file ID number"
+    for file_num in range(max_file_num, 0, -1):
+        file_to_move_node = file_nodes[file_num]
+        # noinspection PyTypeChecker
+        file_to_move: File = file_to_move_node.value
+
+        # Find span of free space to the left of the file, large enough to fit the file
+        free_space = disk_map.head
+        while not (((free_space.value.type == RegionType.FILE) and
+                    (free_space.value.file_id == file_to_move.file_id))
+                   or ((free_space.value.type == RegionType.FREE_SPACE) and
+                       (free_space.value.length >= file_to_move_node.value.length))):
+            free_space = free_space.next
+
+        if free_space.value.type == RegionType.FREE_SPACE:
+            # Found a span of free space large enough
+            disk_map.insert_before(free_space, file_to_move_node.value)
+            free_space.value.length -= file_to_move_node.value.length
+            file_to_move_node.value = FreeSpace(file_to_move_node.value.length)
+            freed_space = file_to_move_node
+            del file_to_move_node
+
+            # Remove span of free space, if it's now empty
+            if free_space.value.length == 0:
+                disk_map.remove(free_space)
+
+            # Merge freed space with free space before it
+            if freed_space.prev.value.type == RegionType.FREE_SPACE:
+                freed_space.value.length += freed_space.prev.value.length
+                disk_map.remove(freed_space.prev)
+
+            # Merge freed space with free space after it
+            if freed_space.next.value.type == RegionType.FREE_SPACE:
+                freed_space.value.length += freed_space.next.value.length
+                disk_map.remove(freed_space.next)
+
+            # Remove trailing free space
+            if disk_map.tail.prev.value.type == RegionType.FREE_SPACE:
+                disk_map.remove(disk_map.tail.prev)
 
     return checksum(disk_map)
-
-
-def move_file_if_possible(disk_map, file_index, file):
-    for i in range(0, file_index):
-        if disk_map[i].type == RegionType.FREE_SPACE:
-            free_space_index, free_space = i, disk_map[i]
-
-            if free_space.length >= file.length:
-                # Free space is large enough to contain the file
-
-                # Move the file
-                disk_map.insert(i, file)
-                free_space_index += 1
-                file_index += 1
-                free_space.length -= file.length
-                disk_map[file_index] = FreeSpace(file.length)
-
-                # Remove free space region, if it's now empty
-                if free_space.length == 0:
-                    disk_map.pop(free_space_index)
-                    file_index -= 1
-
-                # Also remove any free space that could now be at the end
-                while disk_map[len(disk_map) - 1].type == RegionType.FREE_SPACE:
-                    disk_map.pop(len(disk_map) - 1)
-
-                # Merge adjacent free space regions
-                for j in range(len(disk_map) - 1, 0, -1):
-                    if (disk_map[j - 1].type == RegionType.FREE_SPACE) and (disk_map[j].type == RegionType.FREE_SPACE):
-                        disk_map[j - 1].length += disk_map[j].length
-                        disk_map.pop(j)
-
-                return
 
 
 def parse(lines):
     file = True
     file_id = 0
-    disk_map = []
+    disk_map = LinkedList()
     for i in lines[0]:
         length = int(i)
         if file:
@@ -116,9 +129,18 @@ def parse(lines):
     return disk_map
 
 
+class Node:
+    def __init__(self, value, prev_node, next_node):
+        self.value = value
+        self.prev = prev_node
+        self.next = next_node
+
+
 class RegionType(Enum):
+    START = auto()
     FILE = auto()
     FREE_SPACE = auto()
+    END = auto()
 
 
 class Region:
@@ -143,3 +165,31 @@ class FreeSpace(Region):
 
     def __repr__(self):
         return f"FreeSpace[length={self.length}]"
+
+
+class LinkedList:
+    def __init__(self):
+        self.head = Node(Region(RegionType.START, 0), None, None)
+        self.tail = Node(Region(RegionType.END, 0), None, None)
+        self.head.next = self.tail
+        self.tail.prev = self.head
+
+    def append(self, value):
+        new_node = Node(value, self.tail.prev, self.tail)
+        self.tail.prev.next = new_node
+        self.tail.prev = new_node
+
+    @staticmethod
+    def insert_before(node, value):
+        new_node = Node(value, node.prev, node)
+        node.prev.next = new_node
+        node.prev = new_node
+
+    @staticmethod
+    def remove(node):
+        node.prev.next = node.next
+        node.next.prev = node.prev
+
+    def discard_after(self, node):
+        node.next = self.tail
+        self.tail.prev = node
